@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Q-Learning Maze</title>
+    <style>
+        :root {
+            --color-background: #FFF2D8;
+            --color-wall: #113946;
+            --color-start: #F8E559;
+            --color-finish: #5D9C59;
+            --color-current: #DF2E38;
+            --color-visited: #ADD8E6;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        .canvas {
+            display: grid;
+            place-items: center;
+            min-height: 100vh;
+            background: var(--color-background);
+        }
+
+        .container {
+            display: grid;
+            place-items: center;
+            gap: 30px;
+        }
+
+        #app-maze {
+            display: grid;
+            border: 50px solid var(--color-wall);
+        }
+
+        .cell {
+            width: 50px;
+            height: 50px;
+            text-align: center;
+            line-height: 50px;
+            font-size: 0.8em;
+        }
+
+        .cell--visited {
+            background: var(--color-visited);
+        }
+
+        .cell--wall {
+            background: var(--color-wall);
+        }
+
+        .cell--finish {
+            background: var(--color-finish);
+        }
+
+        .cell--start {
+            background: var(--color-start);
+        }
+
+        .cell--current {
+            background: var(--color-current);
+        }
+
+        #app-terminal-container {
+            background: #0F0f0f;
+            border: 2px solid #333333;
+            border-top: 30px solid #333333;
+            color: #efefef;
+            padding: 10px 20px;
+        }
+
+        #app-terminal {
+            width: 500px;
+            height: 200px;
+            overflow-y: scroll;
+        }
+
+        #app-start-button {
+            display: inline-block;
+            padding: 10px 20px;
+            font-size: 16px;
+            font-weight: bold;
+            text-align: center;
+            text-decoration: none;
+            cursor: pointer;
+            border: 2px solid #4CAF50;
+            color: #fff;
+            background-color: #4CAF50;
+            border-radius: 5px;
+            transition: background-color 0.3s ease;
+        }
+
+        #app-start-button:hover {
+            background-color: #45a049;
+        }
+
+        #app-start-button:active {
+            background-color: #398439;
+        }
+    </style>
+</head>
+<body>
+<div id="app" class="canvas">
+    <div class="container">
+        <div style="display: flex; gap: 20px;">
+            <div id="app-maze" ></div>
+            <div id="settings">
+                <div class="settingsRow">
+                    <label>
+                        Prędkość kroku (ms):
+                        <input id="app-settings-speed" type="number" value="200" step="1" min="1" max="500">
+                    </label>
+                </div>
+
+                <div class="settingsRow">
+                    <label>
+                        Prędkość kroku (ms):
+                        <select id="app-settings-maze">
+                            <option value="test">Poziom 0</option>
+                            <option value="small">Poziom 1</option>
+                            <option value="big">Poziom 3</option>
+                        </select>
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <div id="app-best-of">&nbsp;</div>
+
+        <div id="app-terminal-container">
+            <div id="app-terminal"></div>
+        </div>
+
+        <button id="app-start-button" data-default="Uruchom trening w pętli" data-halt="Wstrzymaj trening"
+                data-cooldown="Wstrzymywanie procesu...">Uruchom trening w pętli
+        </button>
+    </div>
+</div>
+<script>
+
+    class App {
+        // Q-learning parameters
+        learningRate = 0.95;
+        discountFactor = 0.95;
+        explorationProbability = 0.01;
+
+        // Maze configuration
+        config = {
+            'test': {
+                title: 'Poziom 0',
+                startPosition: [0, 0],
+                maze: [
+                    [0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 0],
+                    [0, 0, 0, 0, 2]
+                ],
+                qValues: [],
+                episode: 0,
+                bestOf: {
+                    episode: null,
+                    steps: null
+                }
+            },
+            'small': {
+                title: 'Poziom 1',
+                startPosition: [0, 0],
+                maze: [
+                    [0, 0, 0, 0, 0],
+                    [0, 1, 1, 0, 1],
+                    [0, 1, 0, 0, 0],
+                    [0, 1, 0, 1, 1],
+                    [0, 1, 0, 0, 2]
+                ],
+                qValues: [],
+                episode: 0,
+                bestOf: {
+                    episode: null,
+                    steps: null
+                }
+            },
+            'big': {
+                title: 'Poziom 3',
+                startPosition: [4, 0],
+                maze: [
+                    [0, 1, 0, 1, 0, 0, 0, 1, 2],
+                    [0, 1, 0, 1, 1, 1, 0, 1, 0],
+                    [0, 0, 0, 0, 0, 1, 0, 0, 0],
+                    [1, 1, 0, 1, 0, 1, 0, 1, 1],
+                    [0, 0, 0, 1, 1, 1, 0, 1, 0],
+                    [1, 1, 0, 1, 0, 0, 0, 1, 0],
+                    [0, 1, 0, 1, 0, 1, 0, 0, 0],
+                    [0, 1, 0, 1, 0, 1, 0, 1, 0],
+                    [0, 0, 0, 0, 0, 1, 0, 1, 0],
+                ],
+                qValues: [],
+                episode: 0,
+                bestOf: {
+                    episode: null,
+                    steps: null
+                }
+            }
+        }
+
+        currentEnv = 'small'
+
+        element = {
+            app: null,
+            maze: null,
+            startButton: null,
+            terminal: null,
+            appSettingsSpeed: null,
+            appSettingsMaze: null,
+            appBestOf: null
+        }
+
+        isRunning = false;
+        allowClickButton = true;
+
+        setting = {
+            speed: 200
+        }
+
+        currentState;
+
+        constructor() {
+            this.element.app = document.getElementById('app');
+            this.element.maze = document.getElementById('app-maze');
+            this.element.startButton = document.getElementById('app-start-button');
+            this.element.terminal = document.getElementById('app-terminal');
+            this.element.appSettingsSpeed = document.getElementById('app-settings-speed');
+            this.element.appSettingsMaze = document.getElementById('app-settings-maze');
+            this.element.appBestOf = document.getElementById('app-best-of');
+
+            this.element.startButton.addEventListener('click', (event) => {
+                event.preventDefault();
+
+                if (!this.allowClickButton) {
+                    return
+                }
+
+                if (this.isRunning) {
+                    this.isRunning = false;
+                    this.allowClickButton = false;
+                    this.element.startButton.innerText = this.element.startButton.dataset['cooldown']
+
+                } else {
+                    this.isRunning = true;
+                    this.element.startButton.innerText = this.element.startButton.dataset['halt']
+                    this.element.appSettingsMaze.setAttribute('disabled', true)
+                    this.runTreningLoop();
+                }
+            });
+
+            this.element.appSettingsSpeed.value = this.setting.speed;
+            this.element.appSettingsSpeed.addEventListener('change', (event) => {
+                this.setting.speed = parseInt(this.element.appSettingsSpeed.value)
+            });
+
+            this.element.appSettingsMaze.addEventListener('change', (event) => {
+                this.element.maze.innerHTML = '';
+                this.setMaze(this.element.appSettingsMaze.value)
+            });
+        }
+
+        setMaze(env) {
+            this.currentEnv = env;
+
+            for (let i = 0; i < this.element.appSettingsMaze.options.length; i++) {
+                if (this.element.appSettingsMaze.options[i].value === env) {
+                    this.element.appSettingsMaze.options[i].selected = true;
+                    break;
+                }
+            }
+
+            this.currentState = this.config[this.currentEnv].startPosition;
+
+            if (!this.config[this.currentEnv].qValues.length) {
+                this.config[this.currentEnv].qValues = Array.from({length: this.config[this.currentEnv].maze.length}, () => Array.from({length: this.config[this.currentEnv].maze[0].length}, () => ({
+                    UP: 0,
+                    DOWN: 0,
+                    LEFT: 0,
+                    RIGHT: 0
+                })));
+            }
+
+            if (!this.config[this.currentEnv].episode) {
+                this.config[this.currentEnv].episode = 0;
+            }
+
+            this.element.maze.style.gridTemplateColumns = `repeat(${this.config[this.currentEnv].maze[0].length}, 50px)`;
+
+            for (let i = 0; i < this.config[this.currentEnv].maze.length; i++) {
+                for (let j = 0; j < this.config[this.currentEnv].maze[0].length; j++) {
+                    const cell = document.createElement('div');
+                    cell.classList.add('cell');
+
+                    if (this.config[this.currentEnv].maze[i][j] === 1) {
+                        cell.classList.add('cell--wall')
+                    } else if (this.config[this.currentEnv].maze[i][j] === 2) {
+                        cell.classList.add('cell--finish')
+                    } else if (i === this.config[this.currentEnv].startPosition[0] && j === this.config[this.currentEnv].startPosition[1]) {
+                        cell.classList.add('cell--start')
+                    } else {
+                        cell.classList.add('cell--path')
+                    }
+
+                    this.element.maze.appendChild(cell);
+                }
+            }
+            this.updateBestOf();
+            this.consoleLog(`Ustawiono labirynt ${this.config[this.currentEnv].title}`);
+        }
+
+        async runTreningLoop() {
+            while (this.isRunning) {
+                await this.solveMaze(true);
+                this.resetMaze();
+            }
+
+            this.allowClickButton = true;
+            this.element.startButton.innerText = this.element.startButton.dataset['default']
+            this.element.appSettingsMaze.removeAttribute('disabled')
+        }
+
+
+        async solveMaze() {
+            this.config[this.currentEnv].episode++;
+
+            let steps = 0;
+            const startTime = performance.now();
+
+            while (!this.isGoalState(this.currentState)) {
+
+                await this.visualizeStep();
+
+                const possibleActions = this.getAvailableActions();
+                const action = this.selectAction(possibleActions);
+                const nextState = this.getNextState(action);
+                const reward = this.getReward(nextState);
+
+                this.updateQValue(action, reward, nextState);
+
+                this.currentState = nextState;
+
+                steps++;
+            }
+
+            await this.visualizeStep();
+
+            const endTime = performance.now();
+            const elapsedTime = (endTime - startTime) / 1000; // Czas w sekundach
+
+            if (!this.config[this.currentEnv].bestOf.steps || this.config[this.currentEnv].bestOf.steps > steps) {
+                this.config[this.currentEnv].bestOf.episode = this.config[this.currentEnv].episode;
+                this.config[this.currentEnv].bestOf.steps = steps;
+                this.updateBestOf();
+            }
+
+            this.consoleLog(`[${this.config[this.currentEnv].title}] Epoka ${this.config[this.currentEnv].episode}: Ruchy ${steps}, Czas: ${elapsedTime.toFixed(2)} sekundy`);
+        }
+
+        updateBestOf() {
+
+            this.element.appBestOf.innerHTML = this.config[this.currentEnv].bestOf.episode ? `Najmniejsza ilość ruchów to <b>${this.config[this.currentEnv].bestOf.steps}</b> w epoce <b>${this.config[this.currentEnv].bestOf.episode}</b>` : '&nbsp;';
+
+        }
+
+        updateQValue(action, reward, nextState) {
+            const [row, col] = this.currentState;
+            const qValue = this.config[this.currentEnv].qValues[row][col][action];
+
+            const maxNextStateQValue = Math.max(...Object.values(this.config[this.currentEnv].qValues[nextState[0]][nextState[1]]));
+            this.config[this.currentEnv].qValues[row][col][action] = (1 - this.learningRate) * qValue + this.learningRate * (reward + this.discountFactor * maxNextStateQValue);
+        }
+
+        async visualizeStep() {
+            const [row, col] = this.currentState;
+            const cellIndex = row * this.config[this.currentEnv].maze[0].length + col;
+            const cell = this.element.maze.children[cellIndex];
+            cell.classList.add('cell--current');
+
+            await new Promise((resolve) => {
+                setTimeout(() => {
+                    cell.classList.remove('cell--current');
+                    cell.classList.add('cell--visited');
+                    resolve();
+                }, this.setting.speed);
+            });
+        }
+
+        getAvailableActions() {
+            const [row, col] = this.currentState;
+            const actions = [];
+
+            if (row > 0 && this.config[this.currentEnv].maze[row - 1][col] !== 1) actions.push('UP');
+            if (row < this.config[this.currentEnv].maze.length - 1 && this.config[this.currentEnv].maze[row + 1][col] !== 1) actions.push('DOWN');
+            if (col > 0 && this.config[this.currentEnv].maze[row][col - 1] !== 1) actions.push('LEFT');
+            if (col < this.config[this.currentEnv].maze[0].length - 1 && this.config[this.currentEnv].maze[row][col + 1] !== 1) actions.push('RIGHT');
+
+            return actions;
+        }
+
+        selectAction(possibleActions) {
+            if (Math.random() < this.explorationProbability) {
+                return possibleActions[Math.floor(Math.random() * possibleActions.length)];
+            } else {
+                const [row, col] = this.currentState;
+                const qValuesForCurrentState = this.config[this.currentEnv].qValues[row][col];
+                const maxQValue = Math.max(...Object.values(qValuesForCurrentState));
+                const bestActions = possibleActions.filter((action) => {
+                    return qValuesForCurrentState[action] === maxQValue
+                });
+                const currentActions = bestActions.length ? bestActions : possibleActions
+                return currentActions[Math.floor(Math.random() * currentActions.length)];
+            }
+        }
+
+        isGoalState(state) {
+            const [row, col] = state;
+            return this.config[this.currentEnv].maze[row][col] === 2;
+        }
+
+        getNextState(action) {
+            const [row, col] = this.currentState;
+
+            switch (action) {
+                case 'UP':
+                    return [row - 1, col];
+                case 'DOWN':
+                    return [row + 1, col];
+                case 'LEFT':
+                    return [row, col - 1];
+                case 'RIGHT':
+                    return [row, col + 1];
+                default:
+                    return this.currentState;
+            }
+        }
+
+        getReward(nextState) {
+            return this.isGoalState(nextState) ? 1 : 0;
+        }
+
+        resetMaze() {
+            this.currentState = this.config[this.currentEnv].startPosition;
+
+            const clear = this.element.maze.querySelectorAll('.cell--visited');
+            if (clear) {
+                clear.forEach((el) => {
+                    el.classList.remove('cell--visited');
+                });
+            }
+        }
+
+        consoleLog(text) {
+            const currentTime = new Date().toLocaleTimeString('en-US', {hour12: false});
+            const episodeInfo = document.createElement('div');
+            episodeInfo.className = 'terminal__log';
+            episodeInfo.textContent = `[${currentTime}] ${text}`;
+            this.element.terminal.appendChild(episodeInfo);
+            this.element.terminal.scrollTop = this.element.terminal.scrollHeight;
+        }
+    }
+
+    const app = new App;
+
+    app.setMaze('small')
+
+    app.consoleLog('Wszystko gotowe!');
+</script>
+
+</body>
+</html>
